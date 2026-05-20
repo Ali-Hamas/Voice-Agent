@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>Your restaurants</h1>
+  {% if restaurants %}
+  <table class="grid">
+    <thead><tr><th>Name</th><th>Cuisine</th><th>Twilio number</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for r in restaurants %}
+      <tr>
+        <td><a href="/admin/r/{{ r.id }}">{{ r.name }}</a></td>
+        <td>{{ r.cuisine or '—' }}</td>
+        <td>{{ r.twilio_number or '—' }}</td>
+        <td>{% if r.active %}<span class="ok">live</span>{% else %}<span class="dim">draft</span>{% endif %}</td>
+        <td><a href="/admin/r/{{ r.id }}">manage →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="dim">No restaurants yet. Create your first one below.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Add a restaurant</h2>
+  <form method="post" action="/admin/new" class="row">
+    <input name="name" placeholder="Restaurant name" required />
+    <input name="cuisine" placeholder="Cuisine (e.g. Italian)" />
+    <button type="submit">Create</button>
+  </form>
+</section>
+{% endblock %}

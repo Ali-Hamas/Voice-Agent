@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <h1>An <span class="accent">AI receptionist</span> for your restaurant.</h1>
+  <p class="lead">
+    Never miss a call again. Book tables, take orders, answer menu questions —
+    24 hours a day. Plug in your Twilio number, upload your menu, and you're live in minutes.
+  </p>
+  <div class="cta">
+    <a href="/signup" class="btn orange">Get started — free trial</a>
+    <a href="/login" class="btn ghost">I have an account</a>
+  </div>
+</section>
+
+<section class="features">
+  <div class="card">
+    <h3>🍽️ 1. Tell us about your restaurant</h3>
+    <p>Hours, address, the greeting you want callers to hear. Upload your menu PDF, FAQs and policies — the agent reads them.</p>
+  </div>
+  <div class="card">
+    <h3>📞 2. Plug in your Twilio number</h3>
+    <p>Paste your Account SID, Auth Token and phone number. We wire up the voice webhook for you. One click.</p>
+  </div>
+  <div class="card">
+    <h3>📲 3. Forward your landline</h3>
+    <p>Set call-forwarding from your existing landline to the Twilio number. Customers keep dialling the number they already know.</p>
+  </div>
+</section>
+{% endblock %}

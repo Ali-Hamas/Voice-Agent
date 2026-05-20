@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>{% block title %}Restaurant Voice Agent{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <a href="{% if user %}/admin{% else %}/{% endif %}" class="brand">Restaurant Voice Agent</a>
+  <nav class="nav">
+    {% if user %}
+      <span class="dim">{{ user.email }}</span>
+      <form method="post" action="/logout" class="inline"><button type="submit" class="linkish">Log out</button></form>
+    {% else %}
+      <a href="/login">Log in</a>
+      <a href="/signup" class="btnish">Sign up</a>
+    {% endif %}
+  </nav>
+</header>
+<main class="wrap">
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

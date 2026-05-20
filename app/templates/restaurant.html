@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}{{ r.name }} — Voice Agent{% endblock %}
+{% block content %}
+
+{% set has_profile = (r.hours and r.address) %}
+{% set has_files = files|length > 0 %}
+{% set is_live = r.active %}
+
+<section class="card">
+  <h1>{{ r.name }}
+    {% if is_live %}<span class="pill live">live</span>
+    {% else %}<span class="pill draft">setup</span>{% endif %}
+  </h1>
+  <p class="dim small">
+    Slug: <code>{{ r.slug }}</code>
+    {% if r.twilio_number %} · Number: <code>{{ r.twilio_number }}</code>{% endif %}
+  </p>
+
+  <div class="steps">
+    <div class="step {% if has_profile %}done{% endif %}"><span class="num"><span>1</span></span> Business profile</div>
+    <div class="step {% if has_files %}done{% endif %}"><span class="num"><span>2</span></span> Knowledge added</div>
+    <div class="step {% if is_live %}done{% endif %}"><span class="num"><span>3</span></span> Twilio activated</div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>1. Business profile</h2>
+  <form method="post" action="/admin/r/{{ r.id }}/profile" class="form">
+    <label>Restaurant name <input name="name" value="{{ r.name or '' }}" required /></label>
+    <label>Cuisine <input name="cuisine" value="{{ r.cuisine or '' }}" placeholder="e.g. Italian, BBQ" /></label>
+    <label class="full">Address <input name="address" value="{{ r.address or '' }}" placeholder="123 Main St, City" /></label>
+    <label class="full">Hours <input name="hours" value="{{ r.hours or '' }}" placeholder="Mon–Sun 12pm–11pm" /></label>
+    <label class="full">Greeting <input name="greeting" value="{{ r.greeting or '' }}" placeholder="Hello, thank you for calling…" /></label>
+    <label>Tone <input name="tone" value="{{ r.tone or '' }}" placeholder="warm, professional, concise" /></label>
+    <label>Languages <input name="languages" value="{{ r.languages or '' }}" placeholder="English; switch to caller's language" /></label>
+    <label class="full">Transfer number <span class="mute">(optional, for human handoff)</span>
+      <input name="transfer_number" value="{{ r.transfer_number or '' }}" placeholder="+1..." /></label>
+    <button type="submit">Save profile</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>2. Knowledge base</h2>
+  <p class="dim small">Add menus, FAQs, policies, website pages — anything the agent should know.</p>
+
+  <div class="tabs">
+    <button type="button" class="active" onclick="showTab(event,'tab-file')">📄 File</button>
+    <button type="button" onclick="showTab(event,'tab-url')">🌐 Website URL</button>
+    <button type="button" onclick="showTab(event,'tab-text')">📝 Paste text</button>
+  </div>
+
+  <div id="tab-file" class="tab-panel active">
+    <form method="post" action="/admin/r/{{ r.id }}/upload" enctype="multipart/form-data" class="row">
+      <input type="file" name="files" multiple required />
+      <button type="submit">Upload &amp; train</button>
+    </form>
+    <p class="mute small" style="margin-top:8px">Supports PDF, TXT, MD.</p>
+  </div>
+
+  <div id="tab-url" class="tab-panel">
+    <form method="post" action="/admin/r/{{ r.id }}/add_url" class="row">
+      <input name="url" type="url" placeholder="https://yourrestaurant.com/menu" required />
+      <button type="submit" class="orange">Fetch &amp; train</button>
+    </form>
+    <p class="mute small" style="margin-top:8px">We fetch the page, extract the readable text, and add it to the knowledge base.</p>
+  </div>
+
+  <div id="tab-text" class="tab-panel">
+    <form method="post" action="/admin/r/{{ r.id }}/add_text" class="stack">
+      <label>Title <span class="mute">(optional)</span>
+        <input name="title" placeholder="e.g. Allergy policy" />
+      </label>
+      <label>Text
+        <textarea name="text" rows="6" placeholder="Paste any text the agent should know — special hours, dietary info, anything." required></textarea>
+      </label>
+      <button type="submit" class="orange" style="justify-self:start">Save &amp; train</button>
+    </form>
+  </div>
+
+  {% if files %}
+  <ul class="files">
+    {% for f in files %}
+      {% set kind = 'url' if f.startswith('url_') else ('text' if f.startswith('text_') else 'file') %}
+    <li class="{{ kind }}">
+      <span>{{ f }}</span>
+      <form method="post" action="/admin/r/{{ r.id }}/delete_file" class="inline">
+        <input type="hidden" name="filename" value="{{ f }}" />
+        <button class="linkish" type="submit">remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="mute small" style="margin-top:14px">No knowledge yet — add at least one file, URL, or note.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>🧪 Test the knowledge base</h2>
+  <p class="dim small">Ask a question the way a customer would — see exactly what the agent will retrieve.</p>
+  <form id="test-form" class="row">
+    <input id="test-query" name="query" placeholder="e.g. Do you have gluten-free pasta?" required />
+    <button type="submit" class="ghost">Test</button>
+  </form>
+  <div id="test-result" class="test-box empty"></div>
+</section>
+
+<section class="card">
+  <h2>3. Connect your Twilio number</h2>
+  <p class="dim small">Paste your Twilio credentials and the phone number you bought. We wire the webhook for you.</p>
+  <form id="twilio-form" class="form">
+    <label class="full">Twilio Account SID <input name="twilio_account_sid" value="{{ r.twilio_account_sid or '' }}" required placeholder="AC..." /></label>
+    <label class="full">Twilio Auth Token <input name="twilio_auth_token" type="password" value="{{ r.twilio_auth_token or '' }}" required /></label>
+    <label class="full">Twilio Phone Number <span class="mute">(E.164)</span>
+      <input name="twilio_number" value="{{ r.twilio_number or '' }}" placeholder="+16814056546" required /></label>
+    <button type="submit" class="orange">{% if is_live %}Re-activate{% else %}Activate agent{% endif %}</button>
+  </form>
+  <p id="twilio-result" class="result"></p>
+  <p class="mute small">Tip: forward your existing landline to the Twilio number — customers keep dialling the number they know.</p>
+</section>
+
+<section class="card">
+  <h2>📅 Reservations</h2>
+  {% if reservations %}
+  <table class="grid">
+    <thead><tr><th>#</th><th>Name</th><th>Party</th><th>Date</th><th>Time</th><th>Phone</th><th>Notes</th></tr></thead>
+    <tbody>
+    {% for res in reservations %}
+      <tr><td>{{ res.id }}</td><td>{{ res.name }}</td><td>{{ res.party_size }}</td><td>{{ res.date }}</td><td>{{ res.time }}</td><td>{{ res.phone }}</td><td>{{ res.notes or '' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="mute small">No reservations yet.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>🛍️ Orders</h2>
+  {% if orders %}
+  <table class="grid">
+    <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Mode</th><th>Items</th><th>Address</th></tr></thead>
+    <tbody>
+    {% for o in orders %}
+      <tr><td>{{ o.id }}</td><td>{{ o.name }}</td><td>{{ o.phone }}</td><td>{{ o.mode }}</td><td><code>{{ o.items_json }}</code></td><td>{{ o.address or '' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="mute small">No orders yet.</p>{% endif %}
+</section>
+
+<script>
+function showTab(e, id) {
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  e.currentTarget.classList.add('active');
+  document.getElementById(id).classList.add('active');
+}
+
+document.getElementById('test-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const q = document.getElementById('test-query').value;
+  const out = document.getElementById('test-result');
+  out.className = 'test-box';
+  out.textContent = '⏳ Searching…';
+  try {
+    const fd = new FormData(); fd.append('query', q);
+    const res = await fetch('/admin/r/{{ r.id }}/test_kb', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.ok) {
+      out.className = 'test-box';
+      out.textContent = data.answer || '(no matches)';
+    } else {
+      out.className = 'test-box err';
+      out.textContent = data.error || 'Test failed';
+    }
+  } catch (err) {
+    out.className = 'test-box err';
+    out.textContent = String(err);
+  }
+});
+
+document.getElementById('twilio-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const out = document.getElementById('twilio-result');
+  const btn = e.target.querySelector('button[type=submit]');
+  btn.disabled = true;
+  out.textContent = '⏳ Activating…';
+  out.className = 'result dim';
+  try {
+    const res = await fetch('/admin/r/{{ r.id }}/twilio', { method: 'POST', body: f });
+    const data = await res.json();
+    if (data.ok) {
+      out.textContent = '✅ Activated — webhook set. Call your number now!';
+      out.className = 'result ok';
+      setTimeout(() => location.reload(), 1300);
+    } else {
+      out.textContent = '❌ ' + (data.error || 'failed');
+      out.className = 'result err';
+      btn.disabled = false;
+    }
+  } catch (err) {
+    out.textContent = '❌ ' + err;
+    out.className = 'result err';
+    btn.disabled = false;
+  }
+});
+</script>
+
+{% endblock %}

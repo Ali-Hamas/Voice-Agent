@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card narrow">
+  <h1>Create your account</h1>
+  <p class="dim">One restaurant per account. You can edit everything later.</p>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <form method="post" action="/signup" class="stack">
+    <label>Email
+      <input name="email" type="email" required autofocus />
+    </label>
+    <label>Password
+      <input name="password" type="password" required minlength="8" placeholder="at least 8 characters" />
+    </label>
+    <hr />
+    <label>Restaurant name
+      <input name="restaurant_name" required />
+    </label>
+    <label>Cuisine <span class="dim">(optional)</span>
+      <input name="cuisine" placeholder="Italian, Pakistani, ..." />
+    </label>
+    <button type="submit" class="btn primary">Create account</button>
+  </form>
+  <p class="dim small">Already have an account? <a href="/login">Log in</a>.</p>
+</section>
+{% endblock %}

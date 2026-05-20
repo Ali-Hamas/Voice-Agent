@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.chroma/
+*.log
+
+# user data — DB, uploaded menus, per-restaurant vector stores
+data/
+
+# editor
+.vscode/
+.idea/
+.DS_Store
+
+# claude code local config
+.claude/

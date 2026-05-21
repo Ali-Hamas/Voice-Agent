@@ -37,7 +37,7 @@ def _collection(slug: str):
         return _collections[slug]
     rdir = restaurant_dir(slug)
     client = chromadb.PersistentClient(path=str(rdir / "chroma"))
-    coll = client.get_or_create_collection(name="kb", embedding_function=_embed())
+    coll = client.get_or_create_collection(name="knowledge", embedding_function=_embed())
     _clients[slug] = client
     _collections[slug] = coll
     return coll
@@ -103,7 +103,7 @@ def ingest_for(slug: str) -> int:
     kdir = rdir / "knowledge"
     if slug in _clients:
         try:
-            _clients[slug].delete_collection("kb")
+            _clients[slug].delete_collection("knowledge")
         except Exception:
             pass
         _collections.pop(slug, None)

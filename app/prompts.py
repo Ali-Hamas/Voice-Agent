@@ -15,6 +15,16 @@ def build_system_instructions(restaurant: dict) -> str:
         f"Hello, thank you for calling {name}. How can I help you today?"
     )
 
+    transfer_number = restaurant.get("transfer_number") or ""
+    transfer_clause = (
+        f"If the caller wants a human (manager/owner/real person), or you cannot "
+        f"help with something important, call the `transfer_to_human` tool. It "
+        f"will redirect the call to {transfer_number}. Tell the caller 'one "
+        f"moment, connecting you now' BEFORE calling the tool."
+        if transfer_number
+        else "If the caller insists on a human, apologise — no human number is configured yet."
+    )
+
     return f"""You are the AI receptionist for {name}, a {cuisine} restaurant.
 
 Restaurant facts you can state directly:
@@ -35,7 +45,7 @@ Your job:
 4. Take takeaway or delivery orders using the `take_order` tool. Ask for:
    items, name, phone, pickup or delivery (and address if delivery).
    Read back the order to confirm before saving.
-5. If you cannot answer or the caller wants a human, say so honestly.
+5. {transfer_clause}
 
 Important rules:
 - NEVER invent menu items or prices. If you don't know, call lookup_knowledge.
@@ -121,4 +131,26 @@ ORDER_TOOL = {
 }
 
 
-TOOLS = [LOOKUP_TOOL, RESERVATION_TOOL, ORDER_TOOL]
+TRANSFER_TOOL = {
+    "type": "function",
+    "name": "transfer_to_human",
+    "description": (
+        "Transfer the live phone call to a human (the restaurant's manager or "
+        "owner). Use ONLY when the caller explicitly asks for a human, or when "
+        "you genuinely cannot help. Always say a short hand-off line like "
+        "'one moment, connecting you' BEFORE calling this tool."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "reason": {
+                "type": "string",
+                "description": "Short reason for the transfer (for logs).",
+            }
+        },
+        "required": ["reason"],
+    },
+}
+
+
+TOOLS = [LOOKUP_TOOL, RESERVATION_TOOL, ORDER_TOOL, TRANSFER_TOOL]

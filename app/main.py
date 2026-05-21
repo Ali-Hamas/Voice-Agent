@@ -36,7 +36,7 @@ from .db import (
 )
 from .rag import fetch_url_text, ingest_for, retrieve, format_context
 from .twilio_bridge import run_bridge
-from .twilio_provision import activate_number
+from .twilio_provision import activate_number, send_forward_sms
 
 logging.basicConfig(level=LOG_LEVEL, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("voice-agent")
@@ -377,6 +377,26 @@ async def admin_delete_file(
         except Exception:
             log.exception("Ingest failed")
     return RedirectResponse(url=f"/admin/r/{rid}", status_code=303)
+
+
+@app.post("/admin/r/{rid}/send_forward_sms")
+async def admin_send_forward_sms(
+    rid: int,
+    to_number: str = Form(...),
+    user: dict = Depends(require_login),
+) -> JSONResponse:
+    r = _owned(user, rid)
+    if not (r.get("twilio_account_sid") and r.get("twilio_auth_token") and r.get("twilio_number")):
+        return JSONResponse({"ok": False, "error": "Activate your Twilio number first."})
+    result = send_forward_sms(
+        account_sid=r["twilio_account_sid"],
+        auth_token=r["twilio_auth_token"],
+        from_number=r["twilio_number"],
+        to_number=to_number.strip(),
+        forward_target=r["twilio_number"],
+        restaurant_name=r.get("name") or "your restaurant",
+    )
+    return JSONResponse(result)
 
 
 @app.post("/admin/r/{rid}/twilio")

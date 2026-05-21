@@ -7,6 +7,7 @@ import logging
 
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect, WebSocketState
+from twilio.rest import Client as TwilioClient
 
 from .db import add_order, add_reservation, get_restaurant
 from .rag import format_context, retrieve
@@ -17,20 +18,24 @@ log = logging.getLogger(__name__)
 
 async def run_bridge(twilio_ws: WebSocket, restaurant: dict) -> None:
     stream_sid: str | None = None
+    call_sid: str | None = None
     realtime = RealtimeSession(restaurant=restaurant)
     await realtime.connect()
     done = asyncio.Event()
 
     async def from_twilio() -> None:
-        nonlocal stream_sid
+        nonlocal stream_sid, call_sid
         try:
             while True:
                 msg = await twilio_ws.receive_text()
                 data = json.loads(msg)
                 event = data.get("event")
                 if event == "start":
-                    stream_sid = data["start"]["streamSid"]
-                    log.info("Twilio stream sid=%s restaurant=%s", stream_sid, restaurant["slug"])
+                    start = data["start"]
+                    stream_sid = start["streamSid"]
+                    call_sid = start.get("callSid")
+                    log.info("Twilio stream sid=%s call_sid=%s restaurant=%s",
+                             stream_sid, call_sid, restaurant["slug"])
                     await realtime.trigger_greeting()
                 elif event == "media":
                     await realtime.send_audio_chunk(data["media"]["payload"])
@@ -64,7 +69,7 @@ async def run_bridge(twilio_ws: WebSocket, restaurant: dict) -> None:
                             "streamSid": stream_sid,
                         }))
                 elif etype == "response.function_call_arguments.done":
-                    await _handle_function_call(realtime, restaurant, evt)
+                    await _handle_function_call(realtime, restaurant, evt, call_sid)
                 elif etype == "conversation.item.input_audio_transcription.completed":
                     log.info("Caller: %s", evt.get("transcript", "").strip())
                 elif etype == "response.audio_transcript.done":
@@ -85,7 +90,12 @@ async def run_bridge(twilio_ws: WebSocket, restaurant: dict) -> None:
     await realtime.close()
 
 
-async def _handle_function_call(realtime: RealtimeSession, restaurant: dict, evt: dict) -> None:
+async def _handle_function_call(
+    realtime: RealtimeSession,
+    restaurant: dict,
+    evt: dict,
+    call_sid: str | None = None,
+) -> None:
     name = evt.get("name")
     call_id = evt.get("call_id")
     raw_args = evt.get("arguments", "{}")
@@ -141,6 +151,44 @@ async def _handle_function_call(realtime: RealtimeSession, restaurant: dict, evt
         except Exception as exc:
             out = json.dumps({"ok": False, "error": str(exc)})
             log.exception("order failed")
+        await realtime.send_function_result(call_id, out)
+        return
+
+    if name == "transfer_to_human":
+        target = (restaurant.get("transfer_number") or "").strip()
+        reason = (args.get("reason") or "").strip()
+        if not target:
+            out = json.dumps({"ok": False, "error": "no transfer_number configured"})
+            log.warning("[%s] transfer requested but no number set", slug)
+            await realtime.send_function_result(call_id, out)
+            return
+        if not call_sid:
+            out = json.dumps({"ok": False, "error": "no active call_sid"})
+            log.warning("[%s] transfer requested but no call_sid", slug)
+            await realtime.send_function_result(call_id, out)
+            return
+        sid = restaurant.get("twilio_account_sid") or ""
+        tok = restaurant.get("twilio_auth_token") or ""
+        if not sid or not tok:
+            out = json.dumps({"ok": False, "error": "twilio credentials missing"})
+            await realtime.send_function_result(call_id, out)
+            return
+        twiml = (
+            f'<?xml version="1.0" encoding="UTF-8"?>'
+            f'<Response><Say voice="alice">Connecting you now.</Say>'
+            f'<Dial timeout="25" callerId="{restaurant.get("twilio_number") or ""}">{target}</Dial>'
+            f'</Response>'
+        )
+        try:
+            client = TwilioClient(sid, tok)
+            await asyncio.to_thread(
+                lambda: client.calls(call_sid).update(twiml=twiml)
+            )
+            log.info("[%s] transferred call %s -> %s (reason=%s)", slug, call_sid, target, reason)
+            out = json.dumps({"ok": True, "transferred_to": target})
+        except Exception as exc:
+            log.exception("transfer failed")
+            out = json.dumps({"ok": False, "error": str(exc)})
         await realtime.send_function_result(call_id, out)
         return
 

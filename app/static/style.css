@@ -320,4 +320,5 @@ textarea { font-family: inherit; resize: vertical; min-height: 90px; }
   .hero h1 { font-size: 34px; }
   .topbar { padding: 12px 16px; }
   .wrap { padding: 0 14px; }
+  .path-picker { grid-template-columns: 1fr; }
 }

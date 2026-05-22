@@ -158,6 +158,18 @@ async def healthz() -> dict:
     return {"ok": True}
 
 
+@app.get("/favicon.ico")
+async def favicon() -> Response:
+    # Minimal 1x1 transparent PNG so browsers stop logging 404.
+    png = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8"
+        b"\xcf\xc0\x00\x00\x00\x03\x00\x01t\x9d\xfd\xe7\x00\x00\x00\x00IEND"
+        b"\xaeB`\x82"
+    )
+    return Response(content=png, media_type="image/png")
+
+
 @app.post("/voice/incoming")
 async def voice_incoming(request: Request) -> Response:
     host = PUBLIC_HOST or request.url.hostname or ""

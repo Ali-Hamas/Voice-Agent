@@ -316,9 +316,63 @@ textarea { font-family: inherit; resize: vertical; min-height: 90px; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 640px) {
-  .form { grid-template-columns: 1fr; }
-  .hero h1 { font-size: 34px; }
-  .topbar { padding: 12px 16px; }
-  .wrap { padding: 0 14px; }
+  /* layout */
+  .wrap { padding: 0 12px; margin: 16px auto; }
+  .card { padding: 16px 14px; margin-bottom: 14px; border-radius: 12px; }
+
+  /* top bar — stack the user email + logout under the brand on tiny screens */
+  .topbar { padding: 10px 12px; flex-wrap: wrap; gap: 8px; }
+  .topbar .brand { font-size: 14px; }
+  .topbar .nav { gap: 10px; font-size: 13px; }
+  .topbar .nav .dim { display: none; }   /* hide long email to save space */
+
+  /* typography */
+  .hero { padding: 40px 14px 30px; }
+  .hero h1 { font-size: 30px; }
+  .hero .lead { font-size: 15px; }
+  h1 { font-size: 22px; }
+  h2 { font-size: 12px; }
+
+  /* forms */
+  .form { grid-template-columns: 1fr; gap: 10px; }
+  .row { flex-direction: column; align-items: stretch; }
+  .row input, .row textarea, .row select { width: 100%; }
+  .row button { width: 100%; }
+  input, button, textarea, select { font-size: 16px; }  /* 16px stops iOS auto-zoom */
+
+  /* setup progress */
+  .steps .step { min-width: 0; flex-basis: calc(50% - 5px); font-size: 12px; padding: 10px 12px; }
+
+  /* tabs (knowledge base) */
+  .tabs { flex-wrap: wrap; }
+  .tabs button { padding: 8px 10px; font-size: 13px; }
+
+  /* tables — let them scroll horizontally instead of breaking layout */
+  .grid { display: block; overflow-x: auto; white-space: nowrap; }
+
+  /* forwarding selector */
   .path-picker { grid-template-columns: 1fr; }
+  .path-btn { padding: 12px; font-size: 13px; }
+  .forward-options { grid-template-columns: 1fr; gap: 12px; }
+  .fwd-card { padding: 14px; }
+  .fwd-card .btn { width: 100%; text-align: center; margin-right: 0; }
+  .fwd-qr { width: 160px; height: 160px; }
+  #country-select { font-size: 16px; padding: 12px; }
+
+  /* "Tap to forward" — make it big & touch-friendly */
+  #dial-on-btn { padding: 16px 20px; font-size: 16px; }
+
+  /* test KB box */
+  .test-box { font-size: 13px; padding: 12px; max-height: 240px; }
+
+  /* warnings */
+  .warn-block { padding: 12px 14px; }
+  .warn-list li { font-size: 12.5px; }
+
+  /* code chips wrap nicely */
+  code { word-break: break-all; }
+}
+
+@media (max-width: 380px) {
+  .steps .step { flex-basis: 100%; }
 }

@@ -1,4 +1,4 @@
-"""Per-restaurant knowledge base on ChromaDB."""
+"""Per-restaurant knowledge base on ChromaDB (OpenAI embeddings)."""
 from __future__ import annotations
 
 import logging
@@ -13,7 +13,7 @@ import httpx
 from chromadb.utils import embedding_functions
 from pypdf import PdfReader
 
-from .config import EMBED_MODEL
+from .config import EMBED_MODEL, OPENAI_API_KEY
 from .db import restaurant_dir
 
 log = logging.getLogger(__name__)
@@ -24,10 +24,14 @@ _embed_fn = None
 
 
 def _embed():
+    """OpenAI embedding function — no local ML models, no torch."""
     global _embed_fn
     if _embed_fn is None:
-        _embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=EMBED_MODEL
+        if not OPENAI_API_KEY:
+            raise RuntimeError("OPENAI_API_KEY is not set — required for embeddings")
+        _embed_fn = embedding_functions.OpenAIEmbeddingFunction(
+            api_key=OPENAI_API_KEY,
+            model_name=EMBED_MODEL,
         )
     return _embed_fn
 

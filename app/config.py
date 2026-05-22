@@ -18,6 +18,6 @@ DATA_DIR = ROOT / "data"
 RESTAURANTS_DIR = DATA_DIR / "restaurants"
 DB_PATH = DATA_DIR / "voiceagent.sqlite"
 
-EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBED_MODEL = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me-in-production")

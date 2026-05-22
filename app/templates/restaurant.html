@@ -128,29 +128,46 @@
 
   {% if r.twilio_number %}
   {% set tw = r.twilio_number %}
-  {% set us_code = '*72' ~ tw %}
-  {% set eu_code = '**21*' ~ tw ~ '#' %}
 
   <p class="dim small" style="margin-top:14px">
     <strong>Step 4a — Which type of phone does the restaurant use?</strong>
   </p>
 
   <div class="path-picker">
-    <button type="button" class="path-btn active" data-path="landline">📞 Traditional landline / mobile<br><span class="mute small">(AT&amp;T, Verizon, T-Mobile, BT, Virgin…)</span></button>
+    <button type="button" class="path-btn active" data-path="landline">📞 Traditional landline / mobile<br><span class="mute small">(any carrier, any country)</span></button>
     <button type="button" class="path-btn" data-path="voip">☁️ VoIP / cloud phone<br><span class="mute small">(RingCentral, Vonage, Nextiva, Dialpad…)</span></button>
   </div>
 
   <!-- ============ PATH A: LANDLINE / MOBILE ============ -->
   <div id="path-landline" class="path-panel active">
-    <h3 style="margin-top:18px">Easiest way — tap the button on the restaurant's phone</h3>
-    <p class="mute small">Open this dashboard <strong>on the restaurant's phone browser</strong> and tap the right button below. It auto-dials the carrier forwarding code.</p>
+    <h3 style="margin-top:18px">Pick your country, then tap the button on the restaurant's phone</h3>
+    <p class="mute small">Open this dashboard <strong>on the restaurant's phone browser</strong> and tap the orange button. It auto-dials the right carrier forwarding code for your country.</p>
 
-    <div class="forward-options">
+    <label class="full" style="display:block; margin-top:10px">
+      <span class="dim small">Country</span>
+      <select id="country-select" style="width:100%; margin-top:4px">
+        {% for c in forwarding %}
+          <option value="{{ c.code }}"
+                  data-on="{{ c.on }}"
+                  data-off="{{ c.off }}"
+                  data-family="{{ c.family }}"
+                  data-name="{{ c.name }}"
+                  {% if c.code == 'US' %}selected{% endif %}>
+            {{ c.flag }} {{ c.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <div class="forward-options" style="margin-top:14px">
       <div class="fwd-card">
         <h3>📱 One-tap dial</h3>
-        <a href="tel:{{ us_code|urlencode }}" class="btn orange" style="margin-right:8px; margin-bottom:8px">📞 US / Canada</a>
-        <a href="tel:{{ eu_code|urlencode }}" class="btn ghost">📞 UK / Europe</a>
-        <p class="mute small" style="margin-top:10px">Press call, wait for the beep, hang up.</p>
+        <a id="dial-on-btn" href="#" class="btn orange" style="margin-bottom:8px">📞 Tap to forward</a>
+        <p class="mute small" style="margin-top:6px">
+          Code: <code id="dial-on-code">…</code><br>
+          Press call, wait for the beep, hang up.
+        </p>
+        <p class="mute small">To turn OFF later, dial <code id="dial-off-code">…</code></p>
       </div>
 
       <div class="fwd-card">
@@ -165,10 +182,10 @@
 
       <div class="fwd-card">
         <h3>🔲 Or — scan QR</h3>
-        <img class="fwd-qr"
-             src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=tel:{{ us_code|urlencode }}"
+        <img id="fwd-qr-img" class="fwd-qr"
+             src=""
              alt="QR — tap to forward" />
-        <p class="mute small" style="text-align:center; margin:0">US / Canada code</p>
+        <p class="mute small" style="text-align:center; margin:0" id="qr-country-label">…</p>
       </div>
     </div>
 
@@ -177,7 +194,7 @@
       <div class="test-box" style="margin-top:10px">
         Call your phone provider and say:<br><br>
         <em>"Please enable immediate, unconditional call forwarding on our main business line and point it to this number: <strong>{{ tw }}</strong>."</em><br><br>
-        To turn OFF later: dial <code>*73</code> (US) or <code>##21#</code> (UK), or call them again.
+        To turn forwarding OFF later, call them again or dial the code shown above for your country.
       </div>
     </details>
   </div>
@@ -311,6 +328,37 @@ document.querySelectorAll('.path-btn').forEach(btn => {
     if (panel) panel.classList.add('active');
   });
 });
+
+// country dropdown → update button, codes, QR
+function updateForwardCountry() {
+  const sel = document.getElementById('country-select');
+  if (!sel) return;
+  const opt = sel.options[sel.selectedIndex];
+  const onCode = opt.dataset.on || '';
+  const offCode = opt.dataset.off || '';
+  const name = opt.dataset.name || '';
+
+  const btn = document.getElementById('dial-on-btn');
+  if (btn) btn.href = 'tel:' + encodeURIComponent(onCode);
+
+  const onEl = document.getElementById('dial-on-code');
+  if (onEl) onEl.textContent = onCode;
+
+  const offEl = document.getElementById('dial-off-code');
+  if (offEl) offEl.textContent = offCode;
+
+  const qr = document.getElementById('fwd-qr-img');
+  if (qr) qr.src = 'https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=' +
+                   encodeURIComponent('tel:' + onCode);
+
+  const lbl = document.getElementById('qr-country-label');
+  if (lbl) lbl.textContent = name + ' code';
+}
+const countrySel = document.getElementById('country-select');
+if (countrySel) {
+  countrySel.addEventListener('change', updateForwardCountry);
+  updateForwardCountry();
+}
 
 // copy-to-clipboard button (VoIP path)
 document.querySelectorAll('.copy-btn').forEach(btn => {

@@ -34,6 +34,7 @@ from .db import (
     restaurant_dir,
     update_restaurant,
 )
+from .forwarding_codes import all_for as forwarding_all_for
 from .rag import fetch_url_text, ingest_for, retrieve, format_context
 from .twilio_bridge import run_bridge
 from .twilio_provision import activate_number, send_forward_sms
@@ -238,12 +239,14 @@ async def admin_restaurant(request: Request, rid: int, user: dict = Depends(requ
     r = _owned(user, rid)
     kdir = restaurant_dir(r["slug"]) / "knowledge"
     files = sorted([p.name for p in kdir.iterdir() if p.is_file()])
+    forwarding = forwarding_all_for(r.get("twilio_number") or "") if r.get("twilio_number") else []
     return templates.TemplateResponse(
         "restaurant.html",
         _ctx(
             request,
             r=r,
             files=files,
+            forwarding=forwarding,
             reservations=list_reservations(rid),
             orders=list_orders(rid),
         ),

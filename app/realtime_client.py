@@ -17,10 +17,18 @@ REALTIME_URL = "wss://api.openai.com/v1/realtime?model={model}"
 
 
 class RealtimeSession:
-    def __init__(self, restaurant: dict) -> None:
+    def __init__(
+        self,
+        restaurant: dict,
+        *,
+        instructions: str | None = None,
+        tools: list | None = None,
+    ) -> None:
         self.restaurant = restaurant
         self.voice = "alloy"
         self.ws: ClientConnection | None = None
+        self._instructions_override = instructions
+        self._tools_override = tools
 
     async def connect(self) -> None:
         if not OPENAI_API_KEY:
@@ -34,7 +42,12 @@ class RealtimeSession:
         await self._configure_session()
 
     async def _configure_session(self) -> None:
-        instructions = build_system_instructions(self.restaurant)
+        instructions = (
+            self._instructions_override
+            if self._instructions_override is not None
+            else build_system_instructions(self.restaurant)
+        )
+        tools = self._tools_override if self._tools_override is not None else TOOLS
         await self.send({
             "type": "session.update",
             "session": {
@@ -50,7 +63,7 @@ class RealtimeSession:
                     "prefix_padding_ms": 300,
                     "silence_duration_ms": 500,
                 },
-                "tools": TOOLS,
+                "tools": tools,
                 "tool_choice": "auto",
                 "temperature": 0.7,
             },

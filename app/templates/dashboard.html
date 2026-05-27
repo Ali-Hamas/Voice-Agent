@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — {{ r.name }}{% endblock %}
+{% block content %}
+<meta http-equiv="refresh" content="10" />
+
+<section class="card">
+  <h1>📊 Dashboard — {{ r.name }}
+    {% if health.inbound_ready %}<span class="pill live">live</span>
+    {% else %}<span class="pill draft">setup</span>{% endif %}
+  </h1>
+  <p class="dim small">
+    Auto-refreshes every 10 seconds ·
+    <a href="/admin/r/{{ r.id }}">⚙ Setup &amp; data</a>
+  </p>
+</section>
+
+<section class="card">
+  <h2>System health</h2>
+  <div class="steps">
+    <div class="step {% if health.inbound_ready %}done{% endif %}">
+      <span class="num"><span>1</span></span>
+      Inbound agent
+      {% if health.inbound_ready %}<span class="dim small">&nbsp;· {{ r.twilio_number }}</span>
+      {% else %}<span class="dim small">&nbsp;· not activated</span>{% endif %}
+    </div>
+    <div class="step {% if health.outbound_enabled %}done{% endif %}">
+      <span class="num"><span>2</span></span>
+      Outbound reminders
+      {% if health.outbound_enabled %}<span class="dim small">&nbsp;· {{ r.reminder_hours_before or 4 }}h before</span>
+      {% else %}<span class="dim small">&nbsp;· disabled</span>{% endif %}
+    </div>
+    <div class="step {% if health.knowledge_count > 0 %}done{% endif %}">
+      <span class="num"><span>3</span></span>
+      Knowledge
+      <span class="dim small">&nbsp;· {{ health.knowledge_count }} source{{ '' if health.knowledge_count == 1 else 's' }}</span>
+    </div>
+    <div class="step {% if health.transfer_set %}done{% endif %}">
+      <span class="num"><span>4</span></span>
+      Human transfer
+      {% if health.transfer_set %}<span class="dim small">&nbsp;· {{ r.transfer_number }}</span>
+      {% else %}<span class="dim small">&nbsp;· optional</span>{% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Today at a glance</h2>
+  <div class="steps">
+    <div class="step done">
+      <span class="num">📞</span>
+      <div>
+        <div style="font-size:22px; font-weight:700">{{ inbound_today }}</div>
+        <div class="dim small">Inbound calls today ({{ inbound_week }} this week)</div>
+      </div>
+    </div>
+    <div class="step done">
+      <span class="num">📤</span>
+      <div>
+        <div style="font-size:22px; font-weight:700">{{ queued }} / {{ in_flight }}</div>
+        <div class="dim small">Outbound queued / in&nbsp;flight ({{ outbound_today }} today)</div>
+      </div>
+    </div>
+    <div class="step done">
+      <span class="num">📅</span>
+      <div>
+        <div style="font-size:22px; font-weight:700">{{ reservations_today }}</div>
+        <div class="dim small">Reservations today</div>
+      </div>
+    </div>
+    <div class="step done">
+      <span class="num">🛍️</span>
+      <div>
+        <div style="font-size:22px; font-weight:700">{{ orders_today }}</div>
+        <div class="dim small">Orders today</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>📞 Recent inbound calls</h2>
+  {% if recent_calls %}
+  <table class="grid">
+    <thead><tr><th>#</th><th>When</th><th>From</th><th>To</th><th>Duration</th></tr></thead>
+    <tbody>
+    {% for c in recent_calls %}
+      <tr>
+        <td>{{ c.id }}</td>
+        <td class="mute small">{{ c.started_at | datetime }}</td>
+        <td><code>{{ c.from_number or '—' }}</code></td>
+        <td><code>{{ c.to_number or '—' }}</code></td>
+        <td>
+          {% if c.ended_at and c.started_at %}
+            {% set d = c.ended_at - c.started_at %}
+            {% if d < 60 %}{{ d }}s
+            {% else %}{{ (d // 60) }}m {{ (d % 60) }}s{% endif %}
+          {% else %}
+            <span class="dim small">…in progress</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="mute small">No inbound calls logged yet. Once someone calls your Twilio number, the call will appear here.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>📤 Recent outbound jobs</h2>
+  {% if recent_jobs %}
+  <table class="grid">
+    <thead><tr>
+      <th>#</th><th>Type</th><th>To</th><th>Guest</th>
+      <th>Status</th><th>Outcome</th><th>Src</th><th>Attempts</th>
+    </tr></thead>
+    <tbody>
+    {% for j in recent_jobs %}
+      <tr>
+        <td>{{ j.id }}</td>
+        <td>{{ j.job_type }}</td>
+        <td><code>{{ j.to_number }}</code></td>
+        <td>{{ j.guest_name or '' }}</td>
+        <td>{{ j.status }}</td>
+        <td>{{ j.outcome or '' }}</td>
+        <td class="mute small">{{ j.source }}</td>
+        <td>{{ j.attempts }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="mute small">No outbound jobs yet. Click "📞 Call now" on a reservation, upload a CSV, or wait for the cron to fire reminders.</p>
+  {% endif %}
+</section>
+
+{% endblock %}

@@ -21,3 +21,10 @@ DB_PATH = DATA_DIR / "voiceagent.sqlite"
 EMBED_MODEL = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me-in-production")
+
+# Outbound calling
+OUTBOUND_GLOBAL_CONCURRENCY = int(os.getenv("OUTBOUND_GLOBAL_CONCURRENCY", "5"))
+OUTBOUND_DISPATCH_INTERVAL_SEC = int(os.getenv("OUTBOUND_DISPATCH_INTERVAL_SEC", "5"))
+OUTBOUND_SCHEDULER_INTERVAL_SEC = int(os.getenv("OUTBOUND_SCHEDULER_INTERVAL_SEC", "60"))
+OUTBOUND_RETRY_DELAY_SEC = int(os.getenv("OUTBOUND_RETRY_DELAY_SEC", "1800"))
+OUTBOUND_MAX_ATTEMPTS = int(os.getenv("OUTBOUND_MAX_ATTEMPTS", "2"))

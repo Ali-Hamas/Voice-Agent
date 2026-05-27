@@ -11,6 +11,10 @@
   <a href="{% if user %}/admin{% else %}/{% endif %}" class="brand">Restaurant Voice Agent</a>
   <nav class="nav">
     {% if user %}
+      {% if user.restaurant_id %}
+        <a href="/admin/r/{{ user.restaurant_id }}/dashboard">📊 Dashboard</a>
+        <a href="/admin/r/{{ user.restaurant_id }}">⚙ Setup</a>
+      {% endif %}
       <span class="dim">{{ user.email }}</span>
       <form method="post" action="/logout" class="inline"><button type="submit" class="linkish">Log out</button></form>
     {% else %}

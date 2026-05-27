@@ -1,6 +1,7 @@
 """FastAPI app: public signup/login + per-owner admin + Twilio voice routes."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import shutil
@@ -22,6 +23,7 @@ from .auth import (
 )
 from .config import LOG_LEVEL, PORT, PUBLIC_HOST, SECRET_KEY
 from .db import (
+    count_calls_since,
     create_restaurant,
     create_user,
     get_restaurant,
@@ -30,11 +32,14 @@ from .db import (
     get_user_by_email,
     init_db,
     list_orders,
+    list_recent_calls,
     list_reservations,
     restaurant_dir,
     update_restaurant,
 )
 from .forwarding_codes import all_for as forwarding_all_for
+from .outbound_caller import dispatcher_loop
+from .outbound_scheduler import scheduler_loop
 from .rag import fetch_url_text, ingest_for, retrieve, format_context
 from .twilio_bridge import run_bridge
 from .twilio_provision import activate_number, send_forward_sms
@@ -54,6 +59,16 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+def _fmt_ts(ts: int | None) -> str:
+    if not ts:
+        return ""
+    from datetime import datetime as _dt
+    return _dt.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M")
+
+
+templates.env.filters["datetime"] = _fmt_ts
+
+
 # inject the logged-in user into every template render
 @app.middleware("http")
 async def _inject_user(request: Request, call_next):
@@ -70,10 +85,26 @@ def _ctx(request: Request, **extra) -> dict:
     }
 
 
+_background_stop = asyncio.Event()
+_background_tasks: list[asyncio.Task] = []
+
+
 @app.on_event("startup")
-def _startup() -> None:
+async def _startup() -> None:
     init_db()
     log.info("DB ready. PUBLIC_HOST=%s", PUBLIC_HOST or "(not set)")
+    _background_stop.clear()
+    _background_tasks.append(asyncio.create_task(dispatcher_loop(_background_stop)))
+    _background_tasks.append(asyncio.create_task(scheduler_loop(_background_stop)))
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    _background_stop.set()
+    for t in _background_tasks:
+        t.cancel()
+    await asyncio.gather(*_background_tasks, return_exceptions=True)
+    _background_tasks.clear()
 
 
 # ---------- public pages ----------
@@ -177,12 +208,15 @@ async def voice_incoming(request: Request) -> Response:
         return Response("PUBLIC_HOST not configured", status_code=500)
     form = await request.form()
     to_number = (form.get("To") or "").strip()
+    from_number = (form.get("From") or "").strip()
     restaurant = get_restaurant_by_number(to_number)
     if not restaurant:
         twiml = """<?xml version="1.0" encoding="UTF-8"?>
 <Response><Say>This number is not configured for the AI receptionist yet. Goodbye.</Say></Response>"""
         return Response(content=twiml, media_type="application/xml")
-    ws_url = f"wss://{host}/voice/stream/{restaurant['slug']}"
+    from urllib.parse import quote
+    qs = f"?from={quote(from_number)}" if from_number else ""
+    ws_url = f"wss://{host}/voice/stream/{restaurant['slug']}{qs}"
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
@@ -200,8 +234,16 @@ async def voice_stream(ws: WebSocket, slug: str) -> None:
         log.warning("No restaurant for slug=%s", slug)
         await ws.close()
         return
+    raw_job_id = ws.query_params.get("job_id")
+    job_id: int | None = None
+    if raw_job_id:
+        try:
+            job_id = int(raw_job_id)
+        except ValueError:
+            log.warning("Invalid job_id=%r on WS stream", raw_job_id)
+    from_number = ws.query_params.get("from") or None
     try:
-        await run_bridge(ws, restaurant=restaurant)
+        await run_bridge(ws, restaurant=restaurant, job_id=job_id, from_number=from_number)
     except Exception:
         log.exception("Bridge crashed")
     finally:
@@ -209,6 +251,101 @@ async def voice_stream(ws: WebSocket, slug: str) -> None:
             await ws.close()
         except Exception:
             pass
+
+
+@app.post("/voice/outbound/status/{job_id}")
+async def voice_outbound_status(job_id: int, request: Request) -> Response:
+    """Twilio call status callback. Drives retry + outcome state."""
+    import time as _time
+
+    from .config import OUTBOUND_MAX_ATTEMPTS, OUTBOUND_RETRY_DELAY_SEC
+    from .outbound_jobs import enqueue_job, get_job, mark_done, mark_failed, mark_in_call
+
+    form = await request.form()
+    status = (form.get("CallStatus") or "").strip().lower()
+    answered_by = (form.get("AnsweredBy") or "").strip().lower()
+    log.info("OUTBOUND status: job=%s status=%s answered_by=%s", job_id, status, answered_by)
+
+    job = get_job(job_id)
+    if not job:
+        return Response(status_code=204)
+
+    def _retry_if_allowed(outcome: str, notes: str = "") -> None:
+        attempts = int(job.get("attempts") or 0)
+        if attempts >= OUTBOUND_MAX_ATTEMPTS:
+            mark_done(job_id, outcome, notes)
+            return
+        mark_done(job_id, outcome, notes)
+        enqueue_job(
+            restaurant_id=job["restaurant_id"],
+            job_type=job["job_type"],
+            to_number=job["to_number"],
+            source=f"retry:{job['source']}",
+            scheduled_at=int(_time.time()) + OUTBOUND_RETRY_DELAY_SEC,
+            reservation_id=job.get("reservation_id"),
+            guest_name=job.get("guest_name") or "",
+            context=job.get("context") or {},
+            attempts=attempts,
+        )
+
+    if status == "in-progress":
+        if answered_by.startswith("machine") or answered_by == "fax":
+            _retry_if_allowed("machine", f"answered_by={answered_by}")
+        else:
+            mark_in_call(job_id)
+        return Response(status_code=204)
+
+    if status == "completed":
+        if not job.get("outcome"):
+            mark_done(job_id, "completed", "")
+        else:
+            mark_done(job_id, job["outcome"], job.get("outcome_notes") or "")
+        return Response(status_code=204)
+
+    if status in {"no-answer", "busy", "failed"}:
+        _retry_if_allowed("no_answer", f"call_status={status}")
+        return Response(status_code=204)
+
+    if status == "canceled":
+        mark_failed(job_id, "cancelled", "operator cancelled")
+        return Response(status_code=204)
+
+    return Response(status_code=204)
+
+
+@app.api_route("/voice/outbound/{job_id}", methods=["GET", "POST"])
+async def voice_outbound(job_id: int, request: Request) -> Response:
+    """TwiML returned to Twilio when an outbound call is answered.
+
+    Twilio fetches this URL via `client.calls.create(url=...)`; we stream the
+    audio to the same WS endpoint the inbound path uses, with ?job_id= so the
+    bridge picks the outbound prompt + tools.
+    """
+    from .outbound_jobs import get_job
+
+    host = PUBLIC_HOST or request.url.hostname or ""
+    job = get_job(job_id)
+    if not host or not job:
+        twiml = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+            "<Response><Say>Configuration error. Goodbye.</Say></Response>"
+        )
+        return Response(content=twiml, media_type="application/xml")
+    restaurant = get_restaurant(job["restaurant_id"])
+    if not restaurant:
+        twiml = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+            "<Response><Say>Restaurant not found. Goodbye.</Say></Response>"
+        )
+        return Response(content=twiml, media_type="application/xml")
+    ws_url = f"wss://{host}/voice/stream/{restaurant['slug']}?job_id={job_id}"
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect>
+    <Stream url="{ws_url}" />
+  </Connect>
+</Response>"""
+    return Response(content=twiml, media_type="application/xml")
 
 
 # ---------- admin (owner) ----------
@@ -248,6 +385,8 @@ async def admin_home(request: Request, user: dict = Depends(require_login)) -> H
 
 @app.get("/admin/r/{rid}", response_class=HTMLResponse)
 async def admin_restaurant(request: Request, rid: int, user: dict = Depends(require_login)) -> HTMLResponse:
+    from .outbound_jobs import list_jobs_for_restaurant
+
     r = _owned(user, rid)
     kdir = restaurant_dir(r["slug"]) / "knowledge"
     files = sorted([p.name for p in kdir.iterdir() if p.is_file()])
@@ -261,6 +400,63 @@ async def admin_restaurant(request: Request, rid: int, user: dict = Depends(requ
             forwarding=forwarding,
             reservations=list_reservations(rid),
             orders=list_orders(rid),
+            jobs=list_jobs_for_restaurant(rid, limit=100),
+        ),
+    )
+
+
+@app.get("/admin/r/{rid}/dashboard", response_class=HTMLResponse)
+async def admin_dashboard(request: Request, rid: int, user: dict = Depends(require_login)) -> HTMLResponse:
+    import time as _time
+    from datetime import datetime as _dt
+    from .outbound_jobs import list_jobs_for_restaurant
+
+    r = _owned(user, rid)
+    kdir = restaurant_dir(r["slug"]) / "knowledge"
+    knowledge_count = sum(1 for p in kdir.iterdir() if p.is_file())
+
+    today_start = int(_dt.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    week_start = today_start - 6 * 86400
+
+    inbound_today = count_calls_since(rid, today_start)
+    inbound_week = count_calls_since(rid, week_start)
+    recent_calls = list_recent_calls(rid, limit=10)
+
+    all_jobs = list_jobs_for_restaurant(rid, limit=200)
+    queued = sum(1 for j in all_jobs if j["status"] == "queued")
+    in_flight = sum(1 for j in all_jobs if j["status"] in ("dialing", "in_call"))
+    outbound_today = sum(1 for j in all_jobs if (j.get("created_at") or 0) >= today_start)
+    recent_jobs = all_jobs[:10]
+
+    reservations = list_reservations(rid)
+    orders = list_orders(rid)
+    reservations_today = sum(1 for x in reservations if (x.get("created_at") or 0) >= today_start)
+    orders_today = sum(1 for x in orders if (x.get("created_at") or 0) >= today_start)
+
+    health = {
+        "inbound_ready": bool(r.get("active") and r.get("twilio_number")),
+        "outbound_enabled": bool(r.get("reminder_enabled")),
+        "twilio_configured": bool(r.get("twilio_account_sid") and r.get("twilio_auth_token") and r.get("twilio_number")),
+        "knowledge_count": knowledge_count,
+        "transfer_set": bool(r.get("transfer_number")),
+    }
+
+    return templates.TemplateResponse(
+        "dashboard.html",
+        _ctx(
+            request,
+            r=r,
+            now_ts=int(_time.time()),
+            health=health,
+            inbound_today=inbound_today,
+            inbound_week=inbound_week,
+            recent_calls=recent_calls,
+            queued=queued,
+            in_flight=in_flight,
+            outbound_today=outbound_today,
+            recent_jobs=recent_jobs,
+            reservations_today=reservations_today,
+            orders_today=orders_today,
         ),
     )
 
@@ -412,6 +608,176 @@ async def admin_send_forward_sms(
         restaurant_name=r.get("name") or "your restaurant",
     )
     return JSONResponse(result)
+
+
+@app.post("/admin/r/{rid}/outbound/settings")
+async def admin_outbound_settings(
+    rid: int,
+    reminder_enabled: str = Form(""),
+    reminder_hours_before: int = Form(4),
+    user: dict = Depends(require_login),
+) -> RedirectResponse:
+    _owned(user, rid)
+    update_restaurant(
+        rid,
+        reminder_enabled=1 if reminder_enabled else 0,
+        reminder_hours_before=max(1, min(48, int(reminder_hours_before))),
+    )
+    return RedirectResponse(url=f"/admin/r/{rid}", status_code=303)
+
+
+@app.post("/admin/r/{rid}/outbound/enqueue")
+async def admin_outbound_enqueue(
+    rid: int,
+    reservation_id: int = Form(...),
+    user: dict = Depends(require_login),
+) -> RedirectResponse:
+    """Manual 'Call now' button — enqueues a reminder for a specific reservation."""
+    from .db import list_reservations as _list_reservations
+    from .outbound_jobs import enqueue_job
+
+    _owned(user, rid)
+    target = next((r for r in _list_reservations(rid) if r["id"] == reservation_id), None)
+    if target and (target.get("phone") or "").strip():
+        enqueue_job(
+            restaurant_id=rid,
+            job_type="reservation_reminder",
+            reservation_id=target["id"],
+            to_number=target["phone"].strip(),
+            guest_name=target.get("name") or "",
+            context={
+                "guest_name": target.get("name") or "",
+                "party_size": target.get("party_size"),
+                "date": target.get("date"),
+                "time": target.get("time"),
+                "notes": target.get("notes") or "",
+            },
+            source="manual",
+        )
+    return RedirectResponse(url=f"/admin/r/{rid}", status_code=303)
+
+
+@app.post("/admin/r/{rid}/outbound/csv")
+async def admin_outbound_csv(
+    rid: int,
+    file: UploadFile = File(...),
+    user: dict = Depends(require_login),
+) -> RedirectResponse:
+    import csv
+    import io
+
+    from .outbound_jobs import enqueue_job
+
+    _owned(user, rid)
+    raw = (await file.read()).decode("utf-8", errors="ignore")
+    reader = csv.DictReader(io.StringIO(raw))
+    queued = 0
+    for row in reader:
+        phone = (row.get("phone") or "").strip()
+        if not phone:
+            continue
+        try:
+            party = int(row.get("party_size") or 0) or None
+        except ValueError:
+            party = None
+        enqueue_job(
+            restaurant_id=rid,
+            job_type="reservation_reminder",
+            to_number=phone,
+            guest_name=(row.get("name") or "").strip(),
+            context={
+                "guest_name": (row.get("name") or "").strip(),
+                "party_size": party,
+                "date": (row.get("date") or "").strip(),
+                "time": (row.get("time") or "").strip(),
+                "notes": (row.get("notes") or "").strip(),
+            },
+            source="csv",
+        )
+        queued += 1
+    log.info("OUTBOUND CSV: queued %d jobs for restaurant %s", queued, rid)
+    return RedirectResponse(url=f"/admin/r/{rid}", status_code=303)
+
+
+@app.post("/admin/r/{rid}/outbound/cancel/{job_id}")
+async def admin_outbound_cancel(
+    rid: int,
+    job_id: int,
+    user: dict = Depends(require_login),
+) -> RedirectResponse:
+    from .outbound_jobs import cancel_job, get_job
+
+    _owned(user, rid)
+    job = get_job(job_id)
+    if job and job["restaurant_id"] == rid:
+        cancel_job(job_id)
+    return RedirectResponse(url=f"/admin/r/{rid}", status_code=303)
+
+
+@app.post("/admin/r/{rid}/outbound/rotate_secret")
+async def admin_outbound_rotate_secret(
+    rid: int,
+    user: dict = Depends(require_login),
+) -> RedirectResponse:
+    from .webhook_auth import generate_secret
+
+    _owned(user, rid)
+    update_restaurant(rid, webhook_secret=generate_secret())
+    return RedirectResponse(url=f"/admin/r/{rid}", status_code=303)
+
+
+@app.post("/api/outbound/enqueue")
+async def api_outbound_enqueue(request: Request) -> JSONResponse:
+    """Public webhook to enqueue a single outbound call from an external system
+    (e.g. a POS or reservation platform).
+
+    Headers:
+      X-Restaurant-Slug: <slug>
+      X-Signature: hex(hmac_sha256(restaurant.webhook_secret, raw_body))
+
+    Body (JSON):
+      {
+        "to_number": "+15551234567",
+        "guest_name": "Sarah",                  # optional
+        "reservation_id": 42,                    # optional
+        "job_type": "reservation_reminder",      # default
+        "scheduled_at": 1739999999,              # optional unix ts; default = now
+        "context": { ... }                       # optional snapshot
+      }
+    """
+    from .outbound_jobs import enqueue_job
+    from .webhook_auth import verify
+
+    slug = (request.headers.get("X-Restaurant-Slug") or "").strip()
+    signature = (request.headers.get("X-Signature") or "").strip()
+    body = await request.body()
+    if not slug:
+        return JSONResponse({"ok": False, "error": "missing X-Restaurant-Slug"}, status_code=400)
+    restaurant = get_restaurant_by_slug(slug)
+    if not restaurant:
+        return JSONResponse({"ok": False, "error": "unknown restaurant"}, status_code=404)
+    secret = restaurant.get("webhook_secret") or ""
+    if not secret or not verify(secret, body, signature):
+        return JSONResponse({"ok": False, "error": "invalid signature"}, status_code=401)
+    try:
+        import json as _json
+        payload = _json.loads(body or b"{}")
+    except _json.JSONDecodeError:
+        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+    to_number = (payload.get("to_number") or "").strip()
+    if not to_number:
+        return JSONResponse({"ok": False, "error": "to_number required"}, status_code=400)
+    job_id = enqueue_job(
+        restaurant_id=restaurant["id"],
+        job_type=payload.get("job_type") or "reservation_reminder",
+        to_number=to_number,
+        source="api",
+        scheduled_at=payload.get("scheduled_at"),
+        reservation_id=payload.get("reservation_id"),
+        guest_name=payload.get("guest_name") or "",
+        context=payload.get("context") or {},
+    )
+    return JSONResponse({"ok": True, "job_id": job_id})
 
 
 @app.post("/admin/r/{rid}/twilio")

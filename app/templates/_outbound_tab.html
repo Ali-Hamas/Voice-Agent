@@ -1,0 +1,91 @@
+<section class="card">
+  <h2>📞 Outbound — Reservation reminders</h2>
+  <p class="dim small">
+    The agent will call each guest <strong>{{ r.reminder_hours_before or 4 }}h</strong> before their reservation to confirm.
+    Triggers: cron (auto), manual button below, CSV upload, or POS webhook.
+  </p>
+
+  <form method="post" action="/admin/r/{{ r.id }}/outbound/settings" class="form">
+    <label>
+      <input type="checkbox" name="reminder_enabled" value="1" {% if r.reminder_enabled %}checked{% endif %} />
+      Enable reservation reminders
+    </label>
+    <label>Hours before booking
+      <input type="number" name="reminder_hours_before" min="1" max="48"
+             value="{{ r.reminder_hours_before or 4 }}" />
+    </label>
+    <button type="submit">Save outbound settings</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>📤 Bulk upload (CSV)</h2>
+  <p class="dim small">
+    CSV columns (header row required): <code>phone,name,date,time,party_size,notes</code>.
+    One outbound call per row, scheduled to fire immediately (rate-limited by the global cap).
+  </p>
+  <form method="post" action="/admin/r/{{ r.id }}/outbound/csv" enctype="multipart/form-data" class="row">
+    <input type="file" name="file" accept=".csv,text/csv" required />
+    <button type="submit" class="orange">Upload &amp; queue</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>🔌 POS / external webhook</h2>
+  <p class="dim small">POST a JSON payload to enqueue a call from your POS or any external system. Sign the raw body with HMAC-SHA256 using the secret below.</p>
+  <p class="mute small">Endpoint: <code>POST /api/outbound/enqueue</code></p>
+  <p class="mute small">Headers: <code>X-Restaurant-Slug: {{ r.slug }}</code> · <code>X-Signature: &lt;hex hmac-sha256&gt;</code></p>
+  <p>Secret:
+    {% if r.webhook_secret %}
+      <code style="user-select:all">{{ r.webhook_secret }}</code>
+    {% else %}
+      <span class="mute">not generated yet</span>
+    {% endif %}
+    <form method="post" action="/admin/r/{{ r.id }}/outbound/rotate_secret" class="inline">
+      <button class="linkish" type="submit">{% if r.webhook_secret %}rotate{% else %}generate{% endif %}</button>
+    </form>
+  </p>
+  <details>
+    <summary class="mute small" style="cursor:pointer">Example payload →</summary>
+    <pre class="test-box">{
+  "to_number": "+15551234567",
+  "guest_name": "Sarah",
+  "reservation_id": 42,
+  "context": {"party_size": 4, "date": "2026-05-28", "time": "20:00"}
+}</pre>
+  </details>
+</section>
+
+<section class="card">
+  <h2>📋 Outbound jobs</h2>
+  {% if jobs %}
+  <table class="grid">
+    <thead><tr>
+      <th>#</th><th>Type</th><th>To</th><th>Guest</th><th>Scheduled</th>
+      <th>Status</th><th>Outcome</th><th>Src</th><th>Attempts</th><th></th>
+    </tr></thead>
+    <tbody>
+    {% for j in jobs %}
+      <tr>
+        <td>{{ j.id }}</td>
+        <td>{{ j.job_type }}</td>
+        <td><code>{{ j.to_number }}</code></td>
+        <td>{{ j.guest_name or '' }}</td>
+        <td class="mute small">{{ j.scheduled_at | datetime if j.scheduled_at else '' }}</td>
+        <td>{{ j.status }}</td>
+        <td>{{ j.outcome or '' }}</td>
+        <td class="mute small">{{ j.source }}</td>
+        <td>{{ j.attempts }}</td>
+        <td>
+          {% if j.status == 'queued' %}
+            <form method="post" action="/admin/r/{{ r.id }}/outbound/cancel/{{ j.id }}" class="inline">
+              <button class="linkish" type="submit">cancel</button>
+            </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="mute small">No outbound jobs yet.</p>{% endif %}
+</section>

@@ -14,6 +14,7 @@
   <p class="dim small">
     Slug: <code>{{ r.slug }}</code>
     {% if r.twilio_number %} · Number: <code>{{ r.twilio_number }}</code>{% endif %}
+    · <a href="/admin/r/{{ r.id }}/dashboard">📊 View live dashboard</a>
   </p>
 
   <div class="steps">
@@ -24,6 +25,16 @@
   </div>
 </section>
 
+<div class="tabs top">
+  <button type="button" class="top-tab active" data-target="top-setup">🏗️ Setup</button>
+  <button type="button" class="top-tab" data-target="top-knowledge">📚 Knowledge</button>
+  <button type="button" class="top-tab" data-target="top-inbound">📞 Inbound</button>
+  <button type="button" class="top-tab" data-target="top-outbound">📤 Outbound</button>
+</div>
+
+<!-- ============================== SETUP TAB ============================== -->
+<div id="top-setup" class="tab-panel top-panel active">
+
 <section class="card">
   <h2>1. Business profile</h2>
   <form method="post" action="/admin/r/{{ r.id }}/profile" class="form">
@@ -33,77 +44,58 @@
     <label class="full">Hours <input name="hours" value="{{ r.hours or '' }}" placeholder="Mon–Sun 12pm–11pm" /></label>
     <label class="full">Greeting <input name="greeting" value="{{ r.greeting or '' }}" placeholder="Hello, thank you for calling…" /></label>
     <label>Tone <input name="tone" value="{{ r.tone or '' }}" placeholder="warm, professional, concise" /></label>
-    <label>Languages <input name="languages" value="{{ r.languages or '' }}" placeholder="English; switch to caller's language" /></label>
+    <label class="full">Language mode
+      <select id="lang-mode" onchange="onLangModeChange()" style="width:100%">
+        <option value="all">🌐 All languages — auto-switch to whatever the caller speaks</option>
+        <option value="pick">🎯 Pick specific languages</option>
+        <option value="custom">✍️ Custom (free text)</option>
+      </select>
+    </label>
+
+    <div id="lang-pick-block" class="full" style="display:none; margin-top:6px">
+      <p class="dim small" style="margin:6px 0 8px">
+        Primary language is used to greet. The agent will still switch to the caller's language
+        if they speak something different and it's enabled below.
+      </p>
+      <label class="full">Primary language
+        <select id="lang-primary" style="width:100%">
+          <option value="English">🇬🇧 English</option>
+          <option value="Spanish">🇪🇸 Spanish</option>
+          <option value="French">🇫🇷 French</option>
+          <option value="German">🇩🇪 German</option>
+          <option value="Italian">🇮🇹 Italian</option>
+          <option value="Portuguese">🇵🇹 Portuguese</option>
+          <option value="Hindi">🇮🇳 Hindi</option>
+          <option value="Urdu">🇵🇰 Urdu</option>
+          <option value="Punjabi">Punjabi</option>
+          <option value="Bengali">🇧🇩 Bengali</option>
+          <option value="Arabic">🇸🇦 Arabic</option>
+          <option value="Mandarin">🇨🇳 Mandarin</option>
+          <option value="Cantonese">Cantonese</option>
+          <option value="Japanese">🇯🇵 Japanese</option>
+          <option value="Korean">🇰🇷 Korean</option>
+          <option value="Russian">🇷🇺 Russian</option>
+          <option value="Turkish">🇹🇷 Turkish</option>
+          <option value="Dutch">🇳🇱 Dutch</option>
+          <option value="Polish">🇵🇱 Polish</option>
+          <option value="Vietnamese">🇻🇳 Vietnamese</option>
+          <option value="Thai">🇹🇭 Thai</option>
+          <option value="Indonesian">🇮🇩 Indonesian</option>
+          <option value="Tagalog">🇵🇭 Tagalog</option>
+        </select>
+      </label>
+      <p class="dim small" style="margin:10px 0 6px"><strong>Also accept these languages</strong> (the agent switches if the caller speaks any of them):</p>
+      <div id="lang-extra-grid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:6px"></div>
+    </div>
+
+    <label class="full">Languages instruction (sent to the agent)
+      <input id="languages-input" name="languages" value="{{ r.languages or '' }}" placeholder="English by default. Switch to caller's language." />
+      <span class="dim small">Auto-filled from the picker above. You can also type your own.</span>
+    </label>
     <label class="full">Transfer number <span class="mute">(optional, for human handoff)</span>
       <input name="transfer_number" value="{{ r.transfer_number or '' }}" placeholder="+1..." /></label>
     <button type="submit">Save profile</button>
   </form>
-</section>
-
-<section class="card">
-  <h2>2. Knowledge base</h2>
-  <p class="dim small">Add menus, FAQs, policies, website pages — anything the agent should know.</p>
-
-  <div class="tabs">
-    <button type="button" class="active" onclick="showTab(event,'tab-file')">📄 File</button>
-    <button type="button" onclick="showTab(event,'tab-url')">🌐 Website URL</button>
-    <button type="button" onclick="showTab(event,'tab-text')">📝 Paste text</button>
-  </div>
-
-  <div id="tab-file" class="tab-panel active">
-    <form method="post" action="/admin/r/{{ r.id }}/upload" enctype="multipart/form-data" class="row">
-      <input type="file" name="files" multiple required />
-      <button type="submit">Upload &amp; train</button>
-    </form>
-    <p class="mute small" style="margin-top:8px">Supports PDF, TXT, MD.</p>
-  </div>
-
-  <div id="tab-url" class="tab-panel">
-    <form method="post" action="/admin/r/{{ r.id }}/add_url" class="row">
-      <input name="url" type="url" placeholder="https://yourrestaurant.com/menu" required />
-      <button type="submit" class="orange">Fetch &amp; train</button>
-    </form>
-    <p class="mute small" style="margin-top:8px">We fetch the page, extract the readable text, and add it to the knowledge base.</p>
-  </div>
-
-  <div id="tab-text" class="tab-panel">
-    <form method="post" action="/admin/r/{{ r.id }}/add_text" class="stack">
-      <label>Title <span class="mute">(optional)</span>
-        <input name="title" placeholder="e.g. Allergy policy" />
-      </label>
-      <label>Text
-        <textarea name="text" rows="6" placeholder="Paste any text the agent should know — special hours, dietary info, anything." required></textarea>
-      </label>
-      <button type="submit" class="orange" style="justify-self:start">Save &amp; train</button>
-    </form>
-  </div>
-
-  {% if files %}
-  <ul class="files">
-    {% for f in files %}
-      {% set kind = 'url' if f.startswith('url_') else ('text' if f.startswith('text_') else 'file') %}
-    <li class="{{ kind }}">
-      <span>{{ f }}</span>
-      <form method="post" action="/admin/r/{{ r.id }}/delete_file" class="inline">
-        <input type="hidden" name="filename" value="{{ f }}" />
-        <button class="linkish" type="submit">remove</button>
-      </form>
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="mute small" style="margin-top:14px">No knowledge yet — add at least one file, URL, or note.</p>
-  {% endif %}
-</section>
-
-<section class="card">
-  <h2>🧪 Test the knowledge base</h2>
-  <p class="dim small">Ask a question the way a customer would — see exactly what the agent will retrieve.</p>
-  <form id="test-form" class="row">
-    <input id="test-query" name="query" placeholder="e.g. Do you have gluten-free pasta?" required />
-    <button type="submit" class="ghost">Test</button>
-  </form>
-  <div id="test-result" class="test-box empty"></div>
 </section>
 
 <section class="card">
@@ -258,14 +250,103 @@
   {% endif %}
 </section>
 
+</div><!-- /top-setup -->
+
+<!-- ============================== KNOWLEDGE TAB ============================== -->
+<div id="top-knowledge" class="tab-panel top-panel">
+
+<section class="card">
+  <h2>2. Knowledge base</h2>
+  <p class="dim small">Add menus, FAQs, policies, website pages — anything the agent should know.</p>
+
+  <div class="tabs">
+    <button type="button" class="active" onclick="showTab(event,'tab-file')">📄 File</button>
+    <button type="button" onclick="showTab(event,'tab-url')">🌐 Website URL</button>
+    <button type="button" onclick="showTab(event,'tab-text')">📝 Paste text</button>
+  </div>
+
+  <div id="tab-file" class="tab-panel active">
+    <form method="post" action="/admin/r/{{ r.id }}/upload" enctype="multipart/form-data" class="row">
+      <input type="file" name="files" multiple required />
+      <button type="submit">Upload &amp; train</button>
+    </form>
+    <p class="mute small" style="margin-top:8px">Supports PDF, TXT, MD.</p>
+  </div>
+
+  <div id="tab-url" class="tab-panel">
+    <form method="post" action="/admin/r/{{ r.id }}/add_url" class="row">
+      <input name="url" type="url" placeholder="https://yourrestaurant.com/menu" required />
+      <button type="submit" class="orange">Fetch &amp; train</button>
+    </form>
+    <p class="mute small" style="margin-top:8px">We fetch the page, extract the readable text, and add it to the knowledge base.</p>
+  </div>
+
+  <div id="tab-text" class="tab-panel">
+    <form method="post" action="/admin/r/{{ r.id }}/add_text" class="stack">
+      <label>Title <span class="mute">(optional)</span>
+        <input name="title" placeholder="e.g. Allergy policy" />
+      </label>
+      <label>Text
+        <textarea name="text" rows="6" placeholder="Paste any text the agent should know — special hours, dietary info, anything." required></textarea>
+      </label>
+      <button type="submit" class="orange" style="justify-self:start">Save &amp; train</button>
+    </form>
+  </div>
+
+  {% if files %}
+  <ul class="files">
+    {% for f in files %}
+      {% set kind = 'url' if f.startswith('url_') else ('text' if f.startswith('text_') else 'file') %}
+    <li class="{{ kind }}">
+      <span>{{ f }}</span>
+      <form method="post" action="/admin/r/{{ r.id }}/delete_file" class="inline">
+        <input type="hidden" name="filename" value="{{ f }}" />
+        <button class="linkish" type="submit">remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="mute small" style="margin-top:14px">No knowledge yet — add at least one file, URL, or note.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>🧪 Test the knowledge base</h2>
+  <p class="dim small">Ask a question the way a customer would — see exactly what the agent will retrieve.</p>
+  <form id="test-form" class="row">
+    <input id="test-query" name="query" placeholder="e.g. Do you have gluten-free pasta?" required />
+    <button type="submit" class="ghost">Test</button>
+  </form>
+  <div id="test-result" class="test-box empty"></div>
+</section>
+
+</div><!-- /top-knowledge -->
+
+<!-- ============================== INBOUND TAB ============================== -->
+<div id="top-inbound" class="tab-panel top-panel">
+
 <section class="card">
   <h2>📅 Reservations</h2>
+  <p class="dim small">Captured by the inbound agent when callers book a table. Click "Call now" to trigger an outbound reminder for any row.</p>
   {% if reservations %}
   <table class="grid">
-    <thead><tr><th>#</th><th>Name</th><th>Party</th><th>Date</th><th>Time</th><th>Phone</th><th>Notes</th></tr></thead>
+    <thead><tr><th>#</th><th>Name</th><th>Party</th><th>Date</th><th>Time</th><th>Phone</th><th>Notes</th><th></th></tr></thead>
     <tbody>
     {% for res in reservations %}
-      <tr><td>{{ res.id }}</td><td>{{ res.name }}</td><td>{{ res.party_size }}</td><td>{{ res.date }}</td><td>{{ res.time }}</td><td>{{ res.phone }}</td><td>{{ res.notes or '' }}</td></tr>
+      <tr>
+        <td>{{ res.id }}</td><td>{{ res.name }}</td><td>{{ res.party_size }}</td>
+        <td>{{ res.date }}</td><td>{{ res.time }}</td><td>{{ res.phone }}</td>
+        <td>{{ res.notes or '' }}</td>
+        <td>
+          {% if res.phone %}
+          <form method="post" action="/admin/r/{{ r.id }}/outbound/enqueue" class="inline">
+            <input type="hidden" name="reservation_id" value="{{ res.id }}" />
+            <button class="linkish" type="submit" title="Place an outbound call now">📞 Call now</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
     {% endfor %}
     </tbody>
   </table>
@@ -274,6 +355,7 @@
 
 <section class="card">
   <h2>🛍️ Orders</h2>
+  <p class="dim small">Captured by the inbound agent when callers place an order.</p>
   {% if orders %}
   <table class="grid">
     <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Mode</th><th>Items</th><th>Address</th></tr></thead>
@@ -286,13 +368,137 @@
   {% else %}<p class="mute small">No orders yet.</p>{% endif %}
 </section>
 
+</div><!-- /top-inbound -->
+
+<!-- ============================== OUTBOUND TAB ============================== -->
+<div id="top-outbound" class="tab-panel top-panel">
+
+{% include "_outbound_tab.html" %}
+
+</div><!-- /top-outbound -->
+
 <script>
-function showTab(e, id) {
-  document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-  e.currentTarget.classList.add('active');
-  document.getElementById(id).classList.add('active');
+// ===== Language picker (Business profile) =====
+const LANG_LIST = [
+  "English","Spanish","French","German","Italian","Portuguese",
+  "Hindi","Urdu","Punjabi","Bengali","Arabic","Mandarin","Cantonese",
+  "Japanese","Korean","Russian","Turkish","Dutch","Polish",
+  "Vietnamese","Thai","Indonesian","Tagalog"
+];
+
+function buildLangGrid() {
+  const grid = document.getElementById('lang-extra-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  LANG_LIST.forEach(lang => {
+    const id = 'lang-x-' + lang.toLowerCase();
+    const wrap = document.createElement('label');
+    wrap.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:13px; font-weight:500';
+    wrap.innerHTML = `<input type="checkbox" id="${id}" data-lang="${lang}" /> ${lang}`;
+    grid.appendChild(wrap);
+  });
 }
+
+function languagesInstructionFromPicker() {
+  const primary = document.getElementById('lang-primary').value;
+  const extras = Array.from(document.querySelectorAll('#lang-extra-grid input:checked'))
+    .map(c => c.dataset.lang)
+    .filter(l => l !== primary);
+  if (extras.length === 0) {
+    return `${primary} only. If the caller speaks a different language, politely ask them to continue in ${primary}.`;
+  }
+  return `${primary} by default. Also fluent in: ${extras.join(', ')}. Switch to the caller's language as soon as they speak.`;
+}
+
+function syncPickerToInput() {
+  document.getElementById('languages-input').value = languagesInstructionFromPicker();
+}
+
+function onLangModeChange() {
+  const mode = document.getElementById('lang-mode').value;
+  const block = document.getElementById('lang-pick-block');
+  const input = document.getElementById('languages-input');
+  if (mode === 'all') {
+    block.style.display = 'none';
+    input.value = 'All languages. Greet in English; immediately switch to whatever language the caller speaks and continue the entire call in that language.';
+    input.readOnly = true;
+  } else if (mode === 'pick') {
+    block.style.display = 'block';
+    input.readOnly = true;
+    syncPickerToInput();
+  } else {
+    block.style.display = 'none';
+    input.readOnly = false;
+    input.focus();
+  }
+}
+
+function initLangPicker() {
+  buildLangGrid();
+  const current = (document.getElementById('languages-input').value || '').trim();
+  const mode = document.getElementById('lang-mode');
+  if (!current) {
+    mode.value = 'all';
+  } else if (/^All languages/i.test(current)) {
+    mode.value = 'all';
+  } else {
+    // Try to reverse-detect a "pick" config; otherwise fall back to custom
+    const m = current.match(/^([A-Za-z]+)\s+(by default|only)/);
+    if (m) {
+      mode.value = 'pick';
+      const primary = m[1];
+      const sel = document.getElementById('lang-primary');
+      for (const opt of sel.options) {
+        if (opt.value.toLowerCase() === primary.toLowerCase()) { sel.value = opt.value; break; }
+      }
+      const extrasMatch = current.match(/Also fluent in:\s*([^.]+)\./i);
+      if (extrasMatch) {
+        const extras = extrasMatch[1].split(',').map(s => s.trim().toLowerCase());
+        document.querySelectorAll('#lang-extra-grid input').forEach(c => {
+          if (extras.includes(c.dataset.lang.toLowerCase())) c.checked = true;
+        });
+      }
+    } else {
+      mode.value = 'custom';
+    }
+  }
+  onLangModeChange();
+  document.getElementById('lang-primary').addEventListener('change', syncPickerToInput);
+  document.getElementById('lang-extra-grid').addEventListener('change', syncPickerToInput);
+}
+document.addEventListener('DOMContentLoaded', initLangPicker);
+
+// inner sub-tabs (knowledge file/URL/text) — unchanged behaviour
+function showTab(e, id) {
+  const root = e.currentTarget.closest('section, .tab-panel');
+  if (!root) return;
+  root.querySelectorAll('.tabs:not(.top) button').forEach(b => b.classList.remove('active'));
+  root.querySelectorAll('.tab-panel:not(.top-panel)').forEach(p => p.classList.remove('active'));
+  e.currentTarget.classList.add('active');
+  const panel = document.getElementById(id);
+  if (panel) panel.classList.add('active');
+}
+
+// top-level tabs with localStorage persistence
+const TOP_KEY = 'restaurant_top_tab_{{ r.id }}';
+function showTopTab(target) {
+  document.querySelectorAll('.tabs.top .top-tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.top-panel').forEach(p => p.classList.remove('active'));
+  const btn = document.querySelector('.tabs.top .top-tab[data-target="' + target + '"]');
+  const panel = document.getElementById(target);
+  if (btn && panel) {
+    btn.classList.add('active');
+    panel.classList.add('active');
+    try { localStorage.setItem(TOP_KEY, target); } catch (e) {}
+  }
+}
+document.querySelectorAll('.tabs.top .top-tab').forEach(btn => {
+  btn.addEventListener('click', () => showTopTab(btn.dataset.target));
+});
+try {
+  const saved = localStorage.getItem(TOP_KEY);
+  if (saved && document.getElementById(saved)) showTopTab(saved);
+} catch (e) {}
 
 document.getElementById('test-form').addEventListener('submit', async (e) => {
   e.preventDefault();

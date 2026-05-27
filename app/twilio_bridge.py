@@ -9,17 +9,45 @@ from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 from twilio.rest import Client as TwilioClient
 
-from .db import add_order, add_reservation, get_restaurant
+from .db import add_order, add_reservation, connect, end_call, get_restaurant, start_call
+from . import outbound_jobs as outbound
+from .outbound_prompts import OUTBOUND_TOOLS, build_outbound_reminder_instructions
 from .rag import format_context, retrieve
 from .realtime_client import RealtimeSession
 
 log = logging.getLogger(__name__)
 
 
-async def run_bridge(twilio_ws: WebSocket, restaurant: dict) -> None:
+async def run_bridge(
+    twilio_ws: WebSocket,
+    restaurant: dict,
+    *,
+    job_id: int | None = None,
+    from_number: str | None = None,
+) -> None:
     stream_sid: str | None = None
     call_sid: str | None = None
-    realtime = RealtimeSession(restaurant=restaurant)
+    call_log_id: int | None = None
+
+    job: dict | None = None
+    if job_id is not None:
+        job = outbound.get_job(job_id)
+        if not job:
+            log.warning("Outbound bridge: job %s not found", job_id)
+            return
+        outbound.mark_in_call(job_id)
+        leave_vm = (job.get("attempts") or 0) >= 2
+        instructions = build_outbound_reminder_instructions(
+            restaurant, job, leave_voicemail=leave_vm
+        )
+        realtime = RealtimeSession(
+            restaurant=restaurant,
+            instructions=instructions,
+            tools=OUTBOUND_TOOLS,
+        )
+    else:
+        realtime = RealtimeSession(restaurant=restaurant)
+
     await realtime.connect()
     done = asyncio.Event()
 
@@ -36,6 +64,16 @@ async def run_bridge(twilio_ws: WebSocket, restaurant: dict) -> None:
                     call_sid = start.get("callSid")
                     log.info("Twilio stream sid=%s call_sid=%s restaurant=%s",
                              stream_sid, call_sid, restaurant["slug"])
+                    if job_id is None:
+                        try:
+                            call_log_id = start_call(
+                                restaurant["id"],
+                                call_sid,
+                                from_number,
+                                restaurant.get("twilio_number"),
+                            )
+                        except Exception:
+                            log.exception("inbound start_call log failed")
                     await realtime.trigger_greeting()
                 elif event == "media":
                     await realtime.send_audio_chunk(data["media"]["payload"])
@@ -69,7 +107,7 @@ async def run_bridge(twilio_ws: WebSocket, restaurant: dict) -> None:
                             "streamSid": stream_sid,
                         }))
                 elif etype == "response.function_call_arguments.done":
-                    await _handle_function_call(realtime, restaurant, evt, call_sid)
+                    await _handle_function_call(realtime, restaurant, evt, call_sid, job)
                 elif etype == "conversation.item.input_audio_transcription.completed":
                     log.info("Caller: %s", evt.get("transcript", "").strip())
                 elif etype == "response.audio_transcript.done":
@@ -88,6 +126,11 @@ async def run_bridge(twilio_ws: WebSocket, restaurant: dict) -> None:
         t.cancel()
     await asyncio.gather(t1, t2, return_exceptions=True)
     await realtime.close()
+    if call_log_id is not None:
+        try:
+            end_call(call_log_id)
+        except Exception:
+            log.exception("inbound end_call log failed")
 
 
 async def _handle_function_call(
@@ -95,6 +138,7 @@ async def _handle_function_call(
     restaurant: dict,
     evt: dict,
     call_sid: str | None = None,
+    job: dict | None = None,
 ) -> None:
     name = evt.get("name")
     call_id = evt.get("call_id")
@@ -154,6 +198,50 @@ async def _handle_function_call(
         await realtime.send_function_result(call_id, out)
         return
 
+    if name == "confirm_reservation":
+        rid_arg = args.get("reservation_id") or (job["reservation_id"] if job else None)
+        eta = args.get("eta_minutes")
+        notes = args.get("notes", "")
+        outcome_notes = f"eta_minutes={eta}; {notes}".strip("; ")
+        if job:
+            outbound.set_outcome(job["id"], "confirmed", outcome_notes)
+        if rid_arg:
+            _annotate_reservation(int(rid_arg), f"[CONFIRMED] {outcome_notes}".strip())
+        log.info("[%s] reservation %s confirmed via outbound job %s",
+                 slug, rid_arg, (job or {}).get("id"))
+        await realtime.send_function_result(call_id, json.dumps({"ok": True}))
+        return
+
+    if name == "cancel_reservation":
+        rid_arg = args.get("reservation_id") or (job["reservation_id"] if job else None)
+        reason = args.get("reason", "")
+        if job:
+            outbound.set_outcome(job["id"], "cancelled", reason)
+        if rid_arg:
+            _annotate_reservation(int(rid_arg), f"[CANCELLED] {reason}".strip())
+        log.info("[%s] reservation %s cancelled via outbound job %s",
+                 slug, rid_arg, (job or {}).get("id"))
+        await realtime.send_function_result(call_id, json.dumps({"ok": True}))
+        return
+
+    if name == "reschedule_reservation":
+        rid_arg = args.get("reservation_id") or (job["reservation_id"] if job else None)
+        new_date = args.get("new_date", "")
+        new_time = args.get("new_time", "")
+        party_size = args.get("party_size")
+        if job:
+            outbound.set_outcome(
+                job["id"],
+                "rescheduled",
+                f"new_date={new_date} new_time={new_time} party={party_size or ''}".strip(),
+            )
+        if rid_arg:
+            _reschedule_reservation_row(int(rid_arg), new_date, new_time, party_size)
+        log.info("[%s] reservation %s rescheduled to %s %s",
+                 slug, rid_arg, new_date, new_time)
+        await realtime.send_function_result(call_id, json.dumps({"ok": True}))
+        return
+
     if name == "transfer_to_human":
         target = (restaurant.get("transfer_number") or "").strip()
         reason = (args.get("reason") or "").strip()
@@ -194,3 +282,38 @@ async def _handle_function_call(
 
     log.warning("Unhandled function call: %s", name)
     await realtime.send_function_result(call_id, json.dumps({"ok": False, "error": "unknown tool"}))
+
+
+def _annotate_reservation(reservation_id: int, note: str) -> None:
+    """Append a note to the reservations.notes column. Used by outbound tools."""
+    if not note:
+        return
+    with connect() as cx:
+        row = cx.execute(
+            "SELECT notes FROM reservations WHERE id = ?", (reservation_id,)
+        ).fetchone()
+        if not row:
+            return
+        existing = (row["notes"] or "").strip()
+        combined = f"{existing}\n{note}".strip() if existing else note
+        cx.execute(
+            "UPDATE reservations SET notes = ? WHERE id = ?",
+            (combined, reservation_id),
+        )
+
+
+def _reschedule_reservation_row(
+    reservation_id: int,
+    new_date: str,
+    new_time: str,
+    party_size: int | None,
+) -> None:
+    fields = {"date": new_date, "time": new_time}
+    if party_size is not None:
+        fields["party_size"] = int(party_size)
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    with connect() as cx:
+        cx.execute(
+            f"UPDATE reservations SET {sets} WHERE id = ?",
+            (*fields.values(), reservation_id),
+        )
